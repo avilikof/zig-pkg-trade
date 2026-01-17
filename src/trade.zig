@@ -73,7 +73,7 @@ pub const Trade = struct {
         const price = std.fmt.parseFloat(f64, price_str) catch return ParseError.MissingPrice;
         const quantity = std.fmt.parseFloat(f64, quantity_str) catch return ParseError.MissingQuantity;
         if (price < 0 or quantity < 0) return error.InvalidValue;
-        const value = price * quantity;
+        const value = std.math.round((price * quantity) * 100.0) / 100.0;
 
         return .{
             .type = type_str,
@@ -129,7 +129,7 @@ pub const Trade = struct {
         defer list.deinit(allocator); // Fix: Pass allocator
 
         try list.writer(allocator).print(
-            \\{{"type":"{s}","event_timestamp":{d},"trade_pair":"{s}","trade_id":"{d}","price":"{s}","quantity":"{s}","trade_timestamp":{d},"side":"{s}","value":{e:.6}}}"
+            \\{{"type":"{s}","event_timestamp":{d},"trade_pair":"{s}","trade_id":"{d}","price":"{s}","quantity":"{s}","trade_timestamp":{d},"side":"{s}","value":{d:.2}}}"
         , .{
             self.type,
             self.event_timestamp,
@@ -145,3 +145,203 @@ pub const Trade = struct {
         return list.toOwnedSlice(allocator);
     }
 };
+
+// Add this at the end of src/trade.zig, after the closing brace of the Trade struct
+
+test "parseFromJson - valid buy trade" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"50000.50","q":"0.1","T":1234567890,"m":false}
+    ;
+
+    const trade = try Trade.parseFromJson(json);
+
+    try std.testing.expectEqualStrings("trade", trade.type);
+    try std.testing.expectEqual(@as(i64, 1234567890), trade.event_timestamp);
+    try std.testing.expectEqualStrings("btcusdt", trade.trade_pair);
+    try std.testing.expectEqual(@as(i64, 12345), trade.trade_id);
+    try std.testing.expectEqualStrings("50000.50", trade.price);
+    try std.testing.expectEqualStrings("0.1", trade.quantity);
+    try std.testing.expectEqual(@as(i64, 1234567890), trade.trade_timestamp);
+    try std.testing.expectEqual(Trade.Side.buy, trade.side);
+    try std.testing.expectApproxEqAbs(@as(f64, 5000.05), trade.value, 0.01);
+}
+
+test "parseFromJson - valid sell trade" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"ethusdt","t":67890,"p":"3000.25","q":"2.5","T":1234567890,"m":true}
+    ;
+
+    const trade = try Trade.parseFromJson(json);
+
+    try std.testing.expectEqual(Trade.Side.sell, trade.side);
+    try std.testing.expectApproxEqAbs(@as(f64, 7500.63), trade.value, 0.01);
+}
+
+test "parseFromJson - value rounding to 2 decimal places" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"100.333","q":"2.777","T":1234567890,"m":false}
+    ;
+
+    const trade = try Trade.parseFromJson(json);
+    // 100.333 * 2.777 = 278.624441, rounded to 2 decimals = 278.62
+    try std.testing.expectApproxEqAbs(@as(f64, 278.62), trade.value, 0.01);
+}
+
+test "parseFromJson - missing type field" {
+    const json =
+        \\{"E":1234567890,"s":"btcusdt","t":12345,"p":"50000.50","q":"0.1","T":1234567890,"m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.MissingType, result);
+}
+
+test "parseFromJson - missing event timestamp" {
+    const json =
+        \\{"e":"trade","s":"btcusdt","t":12345,"p":"50000.50","q":"0.1","T":1234567890,"m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.MissingEventTimestamp, result);
+}
+
+test "parseFromJson - missing trade pair" {
+    const json =
+        \\{"e":"trade","E":1234567890,"t":12345,"p":"50000.50","q":"0.1","T":1234567890,"m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.MissingTradePair, result);
+}
+
+test "parseFromJson - missing trade id" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","p":"50000.50","q":"0.1","T":1234567890,"m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.MissingTradeId, result);
+}
+
+test "parseFromJson - missing price" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"q":"0.1","T":1234567890,"m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.MissingPrice, result);
+}
+
+test "parseFromJson - missing quantity" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"50000.50","T":1234567890,"m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.MissingQuantity, result);
+}
+
+test "parseFromJson - missing trade timestamp" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"50000.50","q":"0.1","m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.MissingTradeTimestamp, result);
+}
+
+test "parseFromJson - missing side" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"50000.50","q":"0.1","T":1234567890}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.MissingSide, result);
+}
+
+test "parseFromJson - negative price" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"-50000.50","q":"0.1","T":1234567890,"m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.InvalidValue, result);
+}
+
+test "parseFromJson - negative quantity" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"50000.50","q":"-0.1","T":1234567890,"m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.InvalidValue, result);
+}
+
+test "parseFromJson - invalid price format" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"invalid","q":"0.1","T":1234567890,"m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.MissingPrice, result);
+}
+
+test "parseFromJson - invalid quantity format" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"50000.50","q":"invalid","T":1234567890,"m":false}
+    ;
+
+    const result = Trade.parseFromJson(json);
+    try std.testing.expectError(Trade.ParseError.MissingQuantity, result);
+}
+
+test "parseFromJson - zero value" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"0.0","q":"0.0","T":1234567890,"m":false}
+    ;
+
+    const trade = try Trade.parseFromJson(json);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), trade.value, 0.01);
+}
+
+test "toJson - serialization" {
+    const json_input =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"50000.50","q":"0.1","T":1234567890,"m":false}
+    ;
+
+    const trade = try Trade.parseFromJson(json_input);
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const json_output = try trade.toJson(allocator);
+    defer allocator.free(json_output);
+
+    // Verify the output contains expected fields
+    try std.testing.expect(std.mem.indexOf(u8, json_output, "\"type\":\"trade\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json_output, "\"trade_pair\":\"btcusdt\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json_output, "\"side\":\"buy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json_output, "\"value\":") != null);
+
+    // Verify value is formatted with 2 decimal places
+    const value_start = std.mem.indexOf(u8, json_output, "\"value\":") orelse return error.NotFound;
+    const value_end = std.mem.indexOfPos(u8, json_output, value_start, "}") orelse return error.NotFound;
+    const value_str = json_output[value_start + 8 .. value_end];
+
+    // Check that value has at most 2 decimal places (e.g., "5000.05" or "5000.00")
+    const dot_pos = std.mem.indexOf(u8, value_str, ".") orelse return;
+    if (dot_pos < value_str.len - 1) {
+        const decimal_part = value_str[dot_pos + 1 ..];
+        try std.testing.expect(decimal_part.len <= 2);
+    }
+}
+
+test "parseFromJson - preserves original message" {
+    const json =
+        \\{"e":"trade","E":1234567890,"s":"btcusdt","t":12345,"p":"50000.50","q":"0.1","T":1234567890,"m":false}
+    ;
+
+    const trade = try Trade.parseFromJson(json);
+    try std.testing.expectEqualStrings(json, trade.original_msg);
+}
