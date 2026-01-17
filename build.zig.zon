@@ -25,7 +25,7 @@
     // on the following line intact, so that it shows up in code reviews that
     // modify the field.
 
-    .fingerprint = 0x987e13f3414c30c1, // Changing this has security and trust implications.
+    .fingerprint = 0x7e1a436673affeb4, // Changing this has security and trust implications.
 
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
